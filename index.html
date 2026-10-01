@@ -86,10 +86,12 @@
         /* 音符クリック時のアニメーション */
         .clickable-note {
             cursor: pointer;
-            transition: transform 0.1s, fill 0.1s;
+            transition: transform 0.1s;
         }
-        .clickable-note:active {
+        .clickable-note.playing {
             transform: scale(1.3);
+        }
+        .note-circle.playing {
             fill: #fbbf24; /* amber-400 */
         }
     </style>
@@ -550,27 +552,15 @@
             
             let svgHTML = `<svg width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}">`;
             
-            // 簡易的な五線譜の背景（「ソ」の線を強調）
-            // 第1線 Y=80, 第2線 Y=70(ソ), 第3線 Y=60, 第4線 Y=50, 第5線 Y=40
-            [40, 50, 60, 70, 80].forEach(y => {
-                const isSo = (y === 70);
-                const strokeColor = isSo ? "#94a3b8" : "#e2e8f0";
-                const strokeWidth = isSo ? "2" : "1";
-                svgHTML += `<line x1="0" y1="${y}" x2="${svgWidth}" y2="${y}" stroke="${strokeColor}" stroke-width="${strokeWidth}" />`;
-                if (isSo) {
-                    svgHTML += `<text x="5" y="${y - 4}" fill="${strokeColor}" font-size="12" font-weight="bold">ソ</text>`;
-                }
-            });
-
             if (notesData.length > 0) {
-                // 最初の音を基準 (Y=70 つまり「ソ」に固定)
+                // 最初の音を基準 (Y=50 に配置)
                 const baseMidi = notesData[0].midiFloat;
                 
-                // 半音ずれるごとのピクセル数 (五線譜の線間隔が10px = 全音)
+                // 半音ずれるごとのピクセル数
                 // 半音 = 5px
                 const midiToY = (midi) => {
                     const diff = midi - baseMidi; 
-                    let y = 70 - diff * 5;
+                    let y = 50 - diff * 5;
                     // はみ出しを防止
                     return Math.max(15, Math.min(svgHeight - 30, y));
                 };
@@ -591,11 +581,12 @@
                 }
 
                 // 音符と文字を描画
-                notesData.forEach((note) => {
-                    // クリック領域を広げるための透明な円
-                    svgHTML += `<circle cx="${note.cx}" cy="${note.cy}" r="15" fill="transparent" class="clickable-note" onclick="playShortTone(${note.hz})" />`;
+                notesData.forEach((note, index) => {
+                    const noteId = `note-${Date.now()}-${index}`;
+                    // クリック領域を広げるための透明な円（押している間鳴る）
+                    svgHTML += `<circle id="${noteId}-hit" cx="${note.cx}" cy="${note.cy}" r="15" fill="transparent" class="clickable-note" onmousedown="startNoteSound(${note.hz}, '${noteId}')" onmouseup="stopNoteSound(${note.hz}, '${noteId}')" onmouseleave="stopNoteSound(${note.hz}, '${noteId}')" ontouchstart="startNoteSound(${note.hz}, '${noteId}')" ontouchend="stopNoteSound(${note.hz}, '${noteId}')" />`;
                     // 見た目の音符
-                    svgHTML += `<circle cx="${note.cx}" cy="${note.cy}" r="8" fill="#38bdf8" pointer-events="none" />`;
+                    svgHTML += `<circle id="${noteId}" cx="${note.cx}" cy="${note.cy}" r="8" fill="#38bdf8" class="note-circle" pointer-events="none" />`;
                     // 文字
                     svgHTML += `<text x="${note.cx}" y="${note.cy + 22}" fill="#475569" font-size="16" font-weight="bold" text-anchor="middle" pointer-events="none">${note.char}</text>`;
                 });
@@ -612,9 +603,12 @@
 
         // --- シンセサイザー（音を鳴らす仕組み） ---
         
-        // 履歴の音符クリック用（短い音）
-        async function playShortTone(hz) {
+        // 履歴の音符用（押している間鳴る：再生開始）
+        async function startNoteSound(hz, noteId) {
             await initEngine();
+            const key = 'note_' + hz.toFixed(2);
+            if (activeOscillators[key]) return; // 既に鳴っている場合はスキップ
+
             const osc = audioCtx.createOscillator();
             osc.type = 'triangle';
             osc.frequency.value = hz;
@@ -622,21 +616,47 @@
             const oscGain = audioCtx.createGain();
             oscGain.gain.setValueAtTime(0, audioCtx.currentTime);
             oscGain.gain.linearRampToValueAtTime(0.4, audioCtx.currentTime + 0.02);
-            oscGain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
 
             osc.connect(oscGain);
             oscGain.connect(synthGain);
             osc.start();
-            osc.stop(audioCtx.currentTime + 0.4);
 
+            activeOscillators[key] = { osc, oscGain };
             isSynthPlaying = true;
             currentSynthHz = hz;
-            setTimeout(() => {
-                // 他の音が鳴っていなければ表示を戻す
-                if (Object.keys(activeOscillators).length === 0) {
-                    isSynthPlaying = false;
-                }
-            }, 400);
+
+            // 視覚フィードバック
+            const hitEl = document.getElementById(noteId + '-hit');
+            const circleEl = document.getElementById(noteId);
+            if (hitEl) hitEl.classList.add('playing');
+            if (circleEl) circleEl.classList.add('playing');
+        }
+
+        // 履歴の音符用（押している間鳴る：再生停止）
+        function stopNoteSound(hz, noteId) {
+            const key = 'note_' + hz.toFixed(2);
+            if (!activeOscillators[key]) return;
+
+            const { osc, oscGain } = activeOscillators[key];
+            const now = audioCtx.currentTime;
+
+            // ブツッというノイズを防ぐため、少しフェードアウトして止める
+            oscGain.gain.cancelScheduledValues(now);
+            oscGain.gain.setValueAtTime(oscGain.gain.value, now);
+            oscGain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+            osc.stop(now + 0.1);
+
+            delete activeOscillators[key];
+
+            if (Object.keys(activeOscillators).length === 0) {
+                isSynthPlaying = false;
+            }
+
+            // 視覚フィードバック解除
+            const hitEl = document.getElementById(noteId + '-hit');
+            const circleEl = document.getElementById(noteId);
+            if (hitEl) hitEl.classList.remove('playing');
+            if (circleEl) circleEl.classList.remove('playing');
         }
 
         // 鍵盤用（押しっぱなし対応：再生開始）
