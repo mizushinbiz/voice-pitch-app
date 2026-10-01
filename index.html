@@ -159,6 +159,7 @@
         // --- 状態変数・オーディオコンテキスト ---
         let audioCtx;
         let analyser;
+        let micAnalyser; // マイク専用（スピーカーに接続しない）
         let micStream;
         let micSource;
         let synthGain;
@@ -280,8 +281,14 @@
             }
             try {
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+                // マイク入力分析用アナライザー（スピーカーに接続しない → フィードバック防止）
+                micAnalyser = audioCtx.createAnalyser();
+                micAnalyser.fftSize = 4096; // 高精度ピッチ検出用
+
+                // シンセサイザー波形表示用アナライザー
                 analyser = audioCtx.createAnalyser();
-                analyser.fftSize = 2048; // 波形取得用とYIN用兼用
+                analyser.fftSize = 2048;
                 
                 // シンセサイザー用の出力設定
                 synthGain = audioCtx.createGain();
@@ -322,7 +329,7 @@
                 try {
                     micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
                     micSource = audioCtx.createMediaStreamSource(micStream);
-                    micSource.connect(analyser);
+                    micSource.connect(micAnalyser);
 
                     isMicOn = true;
                     micBtn.textContent = "マイクをオフにする";
@@ -348,11 +355,22 @@
         // --- メイン描画・ピッチ検出ループ ---
         function drawLoop() {
             requestAnimationFrame(drawLoop);
-            if (!analyser) return;
 
-            const bufferLength = analyser.fftSize;
+            // 波形表示用アナライザーを選択
+            // シンセ再生中はシンセ出力、マイクオンならマイク入力を表示
+            let waveAnalyser;
+            if (isSynthPlaying && analyser) {
+                waveAnalyser = analyser;
+            } else if (isMicOn && micAnalyser) {
+                waveAnalyser = micAnalyser;
+            } else if (analyser) {
+                waveAnalyser = analyser;
+            }
+            if (!waveAnalyser) return;
+
+            const bufferLength = waveAnalyser.fftSize;
             const dataArray = new Float32Array(bufferLength);
-            analyser.getFloatTimeDomainData(dataArray);
+            waveAnalyser.getFloatTimeDomainData(dataArray);
 
             // 波形描画
             canvasCtx.fillStyle = 'rgb(15, 23, 42)'; // slate-900
@@ -379,10 +397,20 @@
             // ※シンセサイザー演奏中は固定周波数を表示
             if (isSynthPlaying) {
                 hzDisplay.textContent = Math.round(currentSynthHz);
-            } else if (isMicOn) {
-                const rms = calculateRMS(dataArray);
+            } else if (isMicOn && micAnalyser) {
+                // マイク専用アナライザーからピッチを検出
+                // 波形表示にも micAnalyser を使っている場合はデータを再利用
+                let micData;
+                if (waveAnalyser === micAnalyser) {
+                    micData = dataArray;
+                } else {
+                    micData = new Float32Array(micAnalyser.fftSize);
+                    micAnalyser.getFloatTimeDomainData(micData);
+                }
+
+                const rms = calculateRMS(micData);
                 if (rms > 0.02) { // 発声中（閾値）
-                    const hz = yin(dataArray, audioCtx.sampleRate);
+                    const hz = yin(micData, audioCtx.sampleRate);
                     // 人間の声の範囲 (約60Hz 〜 1000Hz)
                     if (hz > 60 && hz < 1000) {
                         hzDisplay.textContent = Math.round(hz);
@@ -585,8 +613,8 @@
         // --- シンセサイザー（音を鳴らす仕組み） ---
         
         // 履歴の音符クリック用（短い音）
-        function playShortTone(hz) {
-            initEngine();
+        async function playShortTone(hz) {
+            await initEngine();
             const osc = audioCtx.createOscillator();
             osc.type = 'triangle';
             osc.frequency.value = hz;
@@ -612,8 +640,8 @@
         }
 
         // 鍵盤用（押しっぱなし対応：再生開始）
-        function startTone(midi) {
-            initEngine();
+        async function startTone(midi) {
+            await initEngine();
             if (activeOscillators[midi]) return; // 既に鳴っている場合はスキップ
 
             const hz = midiToHz(midi);
