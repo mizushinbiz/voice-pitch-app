@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>こえのたかさ はっけんアプリ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;800&display=swap');
+        
+        body {
+            font-family: 'M PLUS Rounded 1c', sans-serif;
+            background-color: #f0fdfa; /* Tailwind teal-50 */
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* ピアノの鍵盤デザイン */
+        .piano-container {
+            position: relative;
+            height: 100%;
+            display: flex;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            background-color: #333;
+            padding: 2px;
+            gap: 2px;
+        }
+
+        .key-white {
+            flex: 1;
+            background-color: white;
+            border-radius: 0 0 8px 8px;
+            cursor: pointer;
+            transition: background-color 0.1s;
+            position: relative;
+            z-index: 1;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            padding-bottom: 10px;
+            font-weight: 800;
+            color: #ccc;
+        }
+
+        .key-white:active, .key-white.active {
+            background-color: #e2e8f0;
+        }
+
+        .key-black {
+            position: absolute;
+            /* width はJavaScriptで計算して設定します */
+            height: 60%;
+            background-color: #1e293b;
+            border-radius: 0 0 6px 6px;
+            cursor: pointer;
+            z-index: 2;
+            transition: background-color 0.1s;
+        }
+
+        .key-black:active, .key-black.active {
+            background-color: #475569;
+        }
+
+        /* スクロールバーのカスタマイズ */
+        ::-webkit-scrollbar {
+            width: 12px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9; 
+            border-radius: 8px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1; 
+            border-radius: 8px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8; 
+        }
+        
+        /* 音符クリック時のアニメーション */
+        .clickable-note {
+            cursor: pointer;
+            transition: transform 0.1s, fill 0.1s;
+        }
+        .clickable-note:active {
+            transform: scale(1.3);
+            fill: #fbbf24; /* amber-400 */
+        }
+    </style>
+</head>
+<body>
+
+    <!-- メインコンテナ：最大1366px、高さ600px固定 -->
+    <div class="w-full max-w-[1366px] h-[600px] bg-white rounded-3xl shadow-2xl flex flex-col p-4 gap-4 relative">
+        
+        <!-- エラーメッセージ用モーダル（非表示） -->
+        <div id="error-modal" class="hidden absolute inset-0 bg-white/90 z-50 rounded-3xl flex flex-col items-center justify-center p-8 text-center">
+            <h2 class="text-3xl font-bold text-rose-500 mb-4">マイクが使えません</h2>
+            <p class="text-xl text-slate-700" id="error-text">マイクの許可を設定してから、もう一度お試しください。</p>
+            <button onclick="document.getElementById('error-modal').classList.add('hidden')" class="mt-8 bg-slate-200 text-slate-800 px-8 py-3 rounded-full text-xl font-bold">とじる</button>
+        </div>
+
+        <!-- 上部：コントロール、波形、履歴エリア (高さ約420px) -->
+        <div class="flex flex-row h-[420px] gap-4">
+            
+            <!-- 左カラム：マイク操作、Hz表示、波形 (幅固定) -->
+            <div class="w-[350px] flex flex-col gap-4">
+                
+                <!-- マイクボタン -->
+                <button id="mic-btn" class="w-full h-24 bg-sky-400 hover:bg-sky-500 text-white rounded-2xl shadow-md flex items-center justify-center text-2xl font-bold transition-colors">
+                    マイクをオンにする
+                </button>
+
+                <!-- 周波数（Hz）表示 -->
+                <div class="w-full h-32 bg-emerald-100 rounded-2xl shadow-inner flex flex-col items-center justify-center">
+                    <span class="text-slate-500 font-bold text-lg">こえのたかさ</span>
+                    <div class="flex items-baseline gap-2">
+                        <span id="hz-display" class="text-6xl font-bold text-emerald-600">---</span>
+                        <span class="text-2xl font-bold text-emerald-600">Hz</span>
+                    </div>
+                </div>
+
+                <!-- インジケーター（オシロスコープ） -->
+                <div class="w-full flex-1 bg-slate-900 rounded-2xl shadow-inner overflow-hidden relative">
+                    <span class="absolute top-2 left-3 text-slate-400 font-bold text-sm">はけい（インジケーター）</span>
+                    <canvas id="oscilloscope" class="w-full h-full"></canvas>
+                </div>
+            </div>
+
+            <!-- 右カラム：履歴表示 (可変幅、スクロール可能) -->
+            <div class="flex-1 bg-slate-50 rounded-2xl shadow-inner p-4 flex flex-col">
+                <div class="text-slate-500 font-bold text-lg mb-2 pl-2">はなしたことば と メロディー</div>
+                <div id="history-container" class="flex-1 overflow-y-auto pr-2 flex flex-col gap-3">
+                    <!-- 履歴アイテムがここに追加されます -->
+                    <div class="text-center text-slate-400 font-bold mt-10">
+                        マイクをオンにして、なにかはなしてみてね！
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- 下部：ピアノ鍵盤 (残り高さ) -->
+        <div class="flex-1 w-full bg-slate-200 rounded-2xl p-2">
+            <div class="piano-container" id="piano">
+                <!-- JavaScriptで生成 -->
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // --- 状態変数・オーディオコンテキスト ---
+        let audioCtx;
+        let analyser;
+        let micStream;
+        let micSource;
+        let synthGain;
+        let isMicOn = false;
+        let isAudioEngineInitialized = false;
+        
+        let isSynthPlaying = false;
+        let currentSynthHz = 0;
+        const activeOscillators = {}; // 押しっぱなし状態を管理
+
+        // 音声認識用
+        let speechRecognition;
+        let collectedPitches = [];
+        let isSpeaking = false;
+
+        // UI要素
+        const micBtn = document.getElementById('mic-btn');
+        const hzDisplay = document.getElementById('hz-display');
+        const canvas = document.getElementById('oscilloscope');
+        const canvasCtx = canvas.getContext('2d');
+        const historyContainer = document.getElementById('history-container');
+        const errorModal = document.getElementById('error-modal');
+        const errorText = document.getElementById('error-text');
+
+        // MIDIノート番号を周波数(Hz)に変換する関数を追加
+        function midiToHz(midi) {
+            return 440 * Math.pow(2, (midi - 69) / 12);
+        }
+
+        // キャンバスのサイズ設定
+        function resizeCanvas() {
+            canvas.width = canvas.clientWidth;
+            canvas.height = canvas.clientHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        /**
+         * YINアルゴリズムの実装 (JavaScript向け最適化版)
+         * ブラウザのメインスレッドで動作するようバッファサイズを調整して使用します。
+         */
+        function yin(buffer, sampleRate) {
+            const threshold = 0.15;
+            const bufferSize = buffer.length;
+            const halfBufferSize = Math.floor(bufferSize / 2);
+            const yinBuffer = new Float32Array(halfBufferSize);
+
+            // Step 1: 差分関数
+            for (let t = 1; t < halfBufferSize; t++) {
+                for (let i = 0; i < halfBufferSize; i++) {
+                    let delta = buffer[i] - buffer[i + t];
+                    yinBuffer[t] += delta * delta;
+                }
+            }
+
+            // Step 2: 累積平均正規化差分関数
+            yinBuffer[0] = 1;
+            let runningSum = 0;
+            for (let t = 1; t < halfBufferSize; t++) {
+                runningSum += yinBuffer[t];
+                yinBuffer[t] = yinBuffer[t] * t / runningSum;
+            }
+
+            // Step 3: 絶対閾値
+            let tau = -1;
+            for (let t = 1; t < halfBufferSize; t++) {
+                if (yinBuffer[t] < threshold) {
+                    while (t + 1 < halfBufferSize && yinBuffer[t + 1] < yinBuffer[t]) {
+                        t++;
+                    }
+                    tau = t;
+                    break;
+                }
+            }
+
+            // 閾値を超えなかった場合、最小値を探す
+            if (tau === -1) {
+                let minVal = Infinity;
+                for (let t = 1; t < halfBufferSize; t++) {
+                    if (yinBuffer[t] < minVal) {
+                        minVal = yinBuffer[t];
+                        tau = t;
+                    }
+                }
+                if (minVal > threshold) return -1; // 周期性なし（ノイズ）
+            }
+
+            // Step 4: 放物線補間（より正確なピッチを取得）
+            let betterTau = tau;
+            if (tau > 0 && tau < halfBufferSize - 1) {
+                let s0 = yinBuffer[tau - 1];
+                let s1 = yinBuffer[tau];
+                let s2 = yinBuffer[tau + 1];
+                let adjustment = (s2 - s0) / (2 * (2 * s1 - s2 - s0));
+                if (Math.abs(adjustment) < 1) {
+                    betterTau = tau + adjustment;
+                }
+            }
+
+            return sampleRate / betterTau;
+        }
+
+        // --- 音量の計算 ---
+        function calculateRMS(buffer) {
+            let sum = 0;
+            for (let i = 0; i < buffer.length; i++) {
+                sum += buffer[i] * buffer[i];
+            }
+            return Math.sqrt(sum / buffer.length);
+        }
+
+        // --- Web Audio API 初期化（マイクとシンセサイザーの分離） ---
+        async function initEngine() {
+            if (isAudioEngineInitialized) {
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    await audioCtx.resume();
+                }
+                return;
+            }
+            try {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 2048; // 波形取得用とYIN用兼用
+                
+                // シンセサイザー用の出力設定
+                synthGain = audioCtx.createGain();
+                synthGain.gain.value = 0.6; // 音割れを防ぐため少し下げる
+                
+                // シンセサイザー -> アナライザー -> スピーカー
+                synthGain.connect(analyser);
+                analyser.connect(audioCtx.destination);
+
+                isAudioEngineInitialized = true;
+                drawLoop(); // 描画ループ開始
+            } catch(e) {
+                console.error("Audio Context Init Failed:", e);
+            }
+        }
+
+        async function toggleMic() {
+            await initEngine(); // 確実にオーディオエンジンを起動
+
+            if (isMicOn) {
+                // マイクをオフにする処理
+                if (micStream) {
+                    micStream.getTracks().forEach(track => track.stop());
+                }
+                if (micSource) {
+                    micSource.disconnect();
+                }
+                if (speechRecognition) {
+                    speechRecognition.stop();
+                }
+                isMicOn = false;
+                micBtn.textContent = "マイクをオンにする";
+                micBtn.classList.replace('bg-rose-400', 'bg-sky-400');
+                micBtn.classList.replace('hover:bg-rose-500', 'hover:bg-sky-500');
+                hzDisplay.textContent = "---";
+            } else {
+                // マイクをオンにする処理
+                try {
+                    micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+                    micSource = audioCtx.createMediaStreamSource(micStream);
+                    micSource.connect(analyser);
+
+                    isMicOn = true;
+                    micBtn.textContent = "マイクをオフにする";
+                    micBtn.classList.replace('bg-sky-400', 'bg-rose-400');
+                    micBtn.classList.replace('hover:bg-sky-500', 'hover:bg-rose-500');
+
+                    // 履歴エリアの初期メッセージをクリア
+                    if (historyContainer.children.length === 1 && historyContainer.children[0].classList.contains('text-center')) {
+                        historyContainer.innerHTML = '';
+                    }
+
+                    initSpeechRecognition();
+                } catch (err) {
+                    console.error(err);
+                    errorText.textContent = "マイクの設定を確認してください。";
+                    errorModal.classList.remove('hidden');
+                }
+            }
+        }
+
+        micBtn.addEventListener('click', toggleMic);
+
+        // --- メイン描画・ピッチ検出ループ ---
+        function drawLoop() {
+            requestAnimationFrame(drawLoop);
+            if (!analyser) return;
+
+            const bufferLength = analyser.fftSize;
+            const dataArray = new Float32Array(bufferLength);
+            analyser.getFloatTimeDomainData(dataArray);
+
+            // 波形描画
+            canvasCtx.fillStyle = 'rgb(15, 23, 42)'; // slate-900
+            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+            canvasCtx.lineWidth = 4;
+            canvasCtx.strokeStyle = 'rgb(56, 189, 248)'; // sky-400
+            canvasCtx.beginPath();
+            
+            const sliceWidth = canvas.width * 1.0 / bufferLength;
+            let x = 0;
+            for (let i = 0; i < bufferLength; i++) {
+                const v = dataArray[i] * 0.5; // 波形の振幅調整
+                const y = (v + 0.5) * canvas.height;
+                if (i === 0) {
+                    canvasCtx.moveTo(x, y);
+                } else {
+                    canvasCtx.lineTo(x, y);
+                }
+                x += sliceWidth;
+            }
+            canvasCtx.stroke();
+
+            // YINアルゴリズムによるピッチ検出
+            // ※シンセサイザー演奏中は固定周波数を表示
+            if (isSynthPlaying) {
+                hzDisplay.textContent = Math.round(currentSynthHz);
+            } else if (isMicOn) {
+                const rms = calculateRMS(dataArray);
+                if (rms > 0.02) { // 発声中（閾値）
+                    const hz = yin(dataArray, audioCtx.sampleRate);
+                    // 人間の声の範囲 (約60Hz 〜 1000Hz)
+                    if (hz > 60 && hz < 1000) {
+                        hzDisplay.textContent = Math.round(hz);
+                        // 発話中のピッチを記録
+                        if (isSpeaking) {
+                            collectedPitches.push(hz);
+                        }
+                    } else {
+                        hzDisplay.textContent = "---";
+                    }
+                } else {
+                    hzDisplay.textContent = "---";
+                }
+            } else {
+                hzDisplay.textContent = "---";
+            }
+        }
+
+        // --- 音声認識と履歴生成 ---
+        function initSpeechRecognition() {
+            window.SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!window.SpeechRecognition) {
+                const msg = document.createElement('div');
+                msg.className = "text-center text-rose-400 font-bold mt-4";
+                msg.textContent = "※このブラウザは音声認識に対応していません。言葉の表示はできません。";
+                historyContainer.appendChild(msg);
+                return;
+            }
+
+            speechRecognition = new window.SpeechRecognition();
+            speechRecognition.continuous = true;
+            speechRecognition.interimResults = true; // 途中結果も取得してタイミングを改善
+            speechRecognition.lang = 'ja-JP';
+
+            speechRecognition.onstart = () => {
+                isSpeaking = false;
+            };
+
+            speechRecognition.onspeechstart = () => {
+                collectedPitches = [];
+                isSpeaking = true;
+            };
+
+            speechRecognition.onspeechend = () => {
+                isSpeaking = false;
+            };
+
+            speechRecognition.onresult = (event) => {
+                let finalTranscript = '';
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript;
+                    }
+                }
+                
+                if (finalTranscript.trim().length > 0) {
+                    addHistory(finalTranscript, [...collectedPitches]);
+                    collectedPitches = []; // リセットして次の発話に備える
+                }
+            };
+
+            speechRecognition.onend = () => {
+                // マイクがオンの間は再起動を試みる
+                if (isMicOn) {
+                    try { speechRecognition.start(); } catch(e){}
+                }
+            };
+
+            speechRecognition.start();
+        }
+
+        // --- ピッチの平滑化と文字への割り当て ---
+        // ノイズを除去して滑らかなピッチの配列を作る（メディアンフィルタ）
+        function smoothPitches(pitches) {
+            if (pitches.length === 0) return [];
+            const smoothed = [];
+            const windowSize = 5; // 前後5サンプルの窓
+            for (let i = 0; i < pitches.length; i++) {
+                const start = Math.max(0, i - Math.floor(windowSize / 2));
+                const end = Math.min(pitches.length, i + Math.floor(windowSize / 2) + 1);
+                const window = pitches.slice(start, end).sort((a, b) => a - b);
+                smoothed.push(window[Math.floor(window.length / 2)]);
+            }
+            return smoothed;
+        }
+
+        // テキストの文字数に合わせてピッチを抽出
+        function processPitchesToTextLength(text, pitches) {
+            if (pitches.length === 0) return [];
+            const cleanText = text.replace(/\s+/g, ''); // 空白除去
+            if (cleanText.length === 0) return [];
+            
+            const targetCount = cleanText.length;
+            const smoothedPitches = smoothPitches(pitches);
+            
+            const result = [];
+            // ピッチ配列を文字数で等分し、その区間の中央の値を採用する
+            const step = Math.max(1, smoothedPitches.length / targetCount);
+            
+            for (let i = 0; i < targetCount; i++) {
+                // 配列が足りない場合は最後の値を使う
+                const idx = Math.min(smoothedPitches.length - 1, Math.floor(i * step + step / 2));
+                let hz = smoothedPitches[idx];
+                
+                result.push({
+                    char: cleanText[i],
+                    hz: hz,
+                    midiFloat: 69 + 12 * Math.log2(hz / 440)
+                });
+            }
+            return result;
+        }
+
+        // 履歴をUIに追加する
+        function addHistory(text, rawPitches) {
+            const cleanText = text.replace(/\s+/g, '');
+            if (cleanText.length === 0) return;
+            
+            // ピッチを文字ごとに割り当て
+            const notesData = processPitchesToTextLength(cleanText, rawPitches);
+            
+            const item = document.createElement('div');
+            item.className = "bg-white p-3 rounded-xl shadow-sm border border-slate-100 flex flex-col gap-2";
+            
+            const textDiv = document.createElement('div');
+            textDiv.className = "text-xl font-bold text-slate-700 px-2";
+            textDiv.textContent = text;
+            
+            // 文字数に合わせて幅を確保し、横スクロール可能にする
+            const svgWidth = Math.max(300, cleanText.length * 40 + 40);
+            const svgHeight = 110;
+            const svgDiv = document.createElement('div');
+            svgDiv.className = "w-full overflow-x-auto bg-blue-50/50 rounded-lg shrink-0 custom-scrollbar";
+            
+            // スクロールバー用の設定
+            svgDiv.style.scrollbarWidth = "thin";
+            
+            let svgHTML = `<svg width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}">`;
+            
+            // 簡易的な五線譜の背景（「ソ」の線を強調）
+            // 第1線 Y=80, 第2線 Y=70(ソ), 第3線 Y=60, 第4線 Y=50, 第5線 Y=40
+            [40, 50, 60, 70, 80].forEach(y => {
+                const isSo = (y === 70);
+                const strokeColor = isSo ? "#94a3b8" : "#e2e8f0";
+                const strokeWidth = isSo ? "2" : "1";
+                svgHTML += `<line x1="0" y1="${y}" x2="${svgWidth}" y2="${y}" stroke="${strokeColor}" stroke-width="${strokeWidth}" />`;
+                if (isSo) {
+                    svgHTML += `<text x="5" y="${y - 4}" fill="${strokeColor}" font-size="12" font-weight="bold">ソ</text>`;
+                }
+            });
+
+            if (notesData.length > 0) {
+                // 最初の音を基準 (Y=70 つまり「ソ」に固定)
+                const baseMidi = notesData[0].midiFloat;
+                
+                // 半音ずれるごとのピクセル数 (五線譜の線間隔が10px = 全音)
+                // 半音 = 5px
+                const midiToY = (midi) => {
+                    const diff = midi - baseMidi; 
+                    let y = 70 - diff * 5;
+                    // はみ出しを防止
+                    return Math.max(15, Math.min(svgHeight - 30, y));
+                };
+
+                // イントネーションの線を描画
+                let pathD = "";
+                notesData.forEach((note, index) => {
+                    const cx = 40 + index * 40; // 40px間隔
+                    const cy = midiToY(note.midiFloat);
+                    note.cx = cx;
+                    note.cy = cy; // 描画用の座標を保存
+                    if (index === 0) pathD += `M ${cx} ${cy} `;
+                    else pathD += `L ${cx} ${cy} `;
+                });
+                
+                if (notesData.length > 1) {
+                    svgHTML += `<path d="${pathD}" fill="none" stroke="#bae6fd" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />`;
+                }
+
+                // 音符と文字を描画
+                notesData.forEach((note) => {
+                    // クリック領域を広げるための透明な円
+                    svgHTML += `<circle cx="${note.cx}" cy="${note.cy}" r="15" fill="transparent" class="clickable-note" onclick="playShortTone(${note.hz})" />`;
+                    // 見た目の音符
+                    svgHTML += `<circle cx="${note.cx}" cy="${note.cy}" r="8" fill="#38bdf8" pointer-events="none" />`;
+                    // 文字
+                    svgHTML += `<text x="${note.cx}" y="${note.cy + 22}" fill="#475569" font-size="16" font-weight="bold" text-anchor="middle" pointer-events="none">${note.char}</text>`;
+                });
+            }
+            
+            svgHTML += `</svg>`;
+            svgDiv.innerHTML = svgHTML;
+
+            item.appendChild(textDiv);
+            item.appendChild(svgDiv);
+            
+            historyContainer.insertBefore(item, historyContainer.firstChild);
+        }
+
+        // --- シンセサイザー（音を鳴らす仕組み） ---
+        
+        // 履歴の音符クリック用（短い音）
+        function playShortTone(hz) {
+            initEngine();
+            const osc = audioCtx.createOscillator();
+            osc.type = 'triangle';
+            osc.frequency.value = hz;
+
+            const oscGain = audioCtx.createGain();
+            oscGain.gain.setValueAtTime(0, audioCtx.currentTime);
+            oscGain.gain.linearRampToValueAtTime(0.4, audioCtx.currentTime + 0.02);
+            oscGain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+
+            osc.connect(oscGain);
+            oscGain.connect(synthGain);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.4);
+
+            isSynthPlaying = true;
+            currentSynthHz = hz;
+            setTimeout(() => {
+                // 他の音が鳴っていなければ表示を戻す
+                if (Object.keys(activeOscillators).length === 0) {
+                    isSynthPlaying = false;
+                }
+            }, 400);
+        }
+
+        // 鍵盤用（押しっぱなし対応：再生開始）
+        function startTone(midi) {
+            initEngine();
+            if (activeOscillators[midi]) return; // 既に鳴っている場合はスキップ
+
+            const hz = midiToHz(midi);
+            const osc = audioCtx.createOscillator();
+            osc.type = 'triangle';
+            osc.frequency.value = hz;
+
+            const oscGain = audioCtx.createGain();
+            oscGain.gain.setValueAtTime(0, audioCtx.currentTime);
+            oscGain.gain.linearRampToValueAtTime(0.4, audioCtx.currentTime + 0.02);
+            
+            osc.connect(oscGain);
+            oscGain.connect(synthGain);
+            osc.start();
+
+            activeOscillators[midi] = { osc, oscGain };
+            isSynthPlaying = true;
+            currentSynthHz = hz;
+        }
+
+        // 鍵盤用（押しっぱなし対応：再生停止）
+        function stopTone(midi) {
+            if (!activeOscillators[midi]) return;
+
+            const { osc, oscGain } = activeOscillators[midi];
+            const now = audioCtx.currentTime;
+            
+            // ブツッというノイズを防ぐため、少しフェードアウトして止める
+            oscGain.gain.cancelScheduledValues(now);
+            oscGain.gain.setValueAtTime(oscGain.gain.value, now);
+            oscGain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+            osc.stop(now + 0.1);
+
+            delete activeOscillators[midi];
+            
+            if (Object.keys(activeOscillators).length === 0) {
+                isSynthPlaying = false;
+            }
+        }
+
+        // --- ピアノ鍵盤の生成 ---
+        // 3オクターブ（C3: 48 ~ C6: 84）
+        const startOctave = 3;
+        const endOctave = 5;
+        const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+        const keys = [];
+
+        // C3からB5まで生成
+        for (let oct = startOctave; oct <= endOctave; oct++) {
+            for (let i = 0; i < noteNames.length; i++) {
+                keys.push({
+                    note: noteNames[i],
+                    midi: 12 * (oct + 1) + i,
+                    type: noteNames[i].includes('#') ? 'black' : 'white'
+                });
+            }
+        }
+        // 最後にC6を追加
+        keys.push({ note: 'C', midi: 12 * (endOctave + 2), type: 'white' });
+
+        const pianoContainer = document.getElementById('piano');
+        const totalWhiteKeys = keys.filter(k => k.type === 'white').length; // 7 * 3 + 1 = 22鍵
+        let currentWhiteIndex = 0;
+
+        keys.forEach(keyData => {
+            const keyEl = document.createElement('div');
+            const hz = midiToHz(keyData.midi);
+
+            if (keyData.type === 'white') {
+                keyEl.className = 'key-white';
+                // 各オクターブのCにのみラベルを表示してスッキリさせる
+                if (keyData.note === 'C') {
+                    const octNum = Math.floor(keyData.midi / 12) - 1;
+                    keyEl.textContent = `C${octNum}`;
+                    keyEl.style.fontSize = "0.75rem";
+                }
+                keyEl.style.flex = "1"; // 幅を均等に
+                pianoContainer.appendChild(keyEl);
+                currentWhiteIndex++;
+            } else {
+                keyEl.className = 'key-black';
+                // 黒鍵の幅と位置を計算 (白鍵の割合をベースに配置)
+                const whiteWidthPercent = 100 / totalWhiteKeys;
+                const blackWidthPercent = whiteWidthPercent * 0.6; // 白鍵の幅の60%
+                const leftPos = (currentWhiteIndex * whiteWidthPercent) - (blackWidthPercent / 2);
+                
+                keyEl.style.width = `${blackWidthPercent}%`;
+                keyEl.style.left = `${leftPos}%`;
+                pianoContainer.appendChild(keyEl);
+            }
+
+            // クリックまたはタッチで音を鳴らす（押しっぱなし対応）
+            const handlePress = (e) => {
+                e.preventDefault();
+                startTone(keyData.midi);
+                keyEl.classList.add('active');
+            };
+
+            const handleRelease = (e) => {
+                e.preventDefault();
+                stopTone(keyData.midi);
+                keyEl.classList.remove('active');
+            };
+
+            // マウス操作
+            keyEl.addEventListener('mousedown', handlePress);
+            keyEl.addEventListener('mouseup', handleRelease);
+            keyEl.addEventListener('mouseleave', handleRelease); // カーソルが外れた時も止める
+            
+            // タッチ操作
+            keyEl.addEventListener('touchstart', handlePress);
+            keyEl.addEventListener('touchend', handleRelease);
+            
+            // コンテキストメニューを無効化（右クリックや長押しによるスタックを防ぐ）
+            keyEl.addEventListener('contextmenu', e => e.preventDefault());
+        });
+
+    </script>
+</body>
+</html>
