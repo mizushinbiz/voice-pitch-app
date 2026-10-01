@@ -460,17 +460,49 @@
                 isSpeaking = false;
             };
 
+            // 漢字を含むかチェック
+            function containsKanji(text) {
+                return /[\u4e00-\u9faf\u3400-\u4dbf]/.test(text);
+            }
+
+            // 中間結果（ひらがな）を記録するためのマップ
+            const interimHistory = {};
+
             speechRecognition.onresult = (event) => {
-                let finalTranscript = '';
                 for (let i = event.resultIndex; i < event.results.length; i++) {
-                    if (event.results[i].isFinal) {
-                        finalTranscript += event.results[i][0].transcript;
+                    const transcript = event.results[i][0].transcript;
+
+                    if (!event.results[i].isFinal) {
+                        // 中間結果を蓄積（漢字変換前のひらがなを保存するため）
+                        if (!interimHistory[i]) interimHistory[i] = [];
+                        interimHistory[i].push(transcript);
+                    } else {
+                        // 確定結果
+                        const interims = interimHistory[i] || [];
+                        delete interimHistory[i];
+
+                        let displayText = transcript;
+
+                        // 確定結果に漢字が含まれる場合、中間結果からひらがな版を探す
+                        if (containsKanji(transcript)) {
+                            let bestKana = '';
+                            for (const interim of interims) {
+                                // 漢字を含まず、より長い中間結果を優先
+                                if (!containsKanji(interim) && interim.replace(/\s+/g, '').length > bestKana.replace(/\s+/g, '').length) {
+                                    bestKana = interim;
+                                }
+                            }
+                            // ひらがな版が確定結果の文字数以上あれば完全な読みとみなして採用
+                            if (bestKana.length > 0 && bestKana.replace(/\s+/g, '').length >= transcript.replace(/\s+/g, '').length) {
+                                displayText = bestKana;
+                            }
+                        }
+
+                        if (displayText.trim().length > 0) {
+                            addHistory(displayText, [...collectedPitches]);
+                            collectedPitches = [];
+                        }
                     }
-                }
-                
-                if (finalTranscript.trim().length > 0) {
-                    addHistory(finalTranscript, [...collectedPitches]);
-                    collectedPitches = []; // リセットして次の発話に備える
                 }
             };
 
