@@ -584,7 +584,7 @@
                 notesData.forEach((note, index) => {
                     const noteId = `note-${Date.now()}-${index}`;
                     // クリック領域を広げるための透明な円（押している間鳴る）
-                    svgHTML += `<circle id="${noteId}-hit" cx="${note.cx}" cy="${note.cy}" r="15" fill="transparent" class="clickable-note" onmousedown="startNoteSound(${note.hz}, '${noteId}')" onmouseup="stopNoteSound(${note.hz}, '${noteId}')" onmouseleave="stopNoteSound(${note.hz}, '${noteId}')" ontouchstart="startNoteSound(${note.hz}, '${noteId}')" ontouchend="stopNoteSound(${note.hz}, '${noteId}')" />`;
+                    svgHTML += `<circle id="${noteId}-hit" cx="${note.cx}" cy="${note.cy}" r="15" fill="transparent" class="clickable-note" onmousedown="handleNotePress(event, ${note.hz}, '${noteId}')" ontouchstart="handleNotePress(event, ${note.hz}, '${noteId}')" />`;
                     // 見た目の音符
                     svgHTML += `<circle id="${noteId}" cx="${note.cx}" cy="${note.cy}" r="8" fill="#38bdf8" class="note-circle" pointer-events="none" />`;
                     // 文字
@@ -603,37 +603,63 @@
 
         // --- シンセサイザー（音を鳴らす仕組み） ---
         
-        // 履歴の音符用（押している間鳴る：再生開始）
-        async function startNoteSound(hz, noteId) {
-            await initEngine();
-            const key = 'note_' + hz.toFixed(2);
-            if (activeOscillators[key]) return; // 既に鳴っている場合はスキップ
+        // 現在押されている音符の情報
+        let activeNoteHz = null;
+        let activeNoteId = null;
 
-            const osc = audioCtx.createOscillator();
-            osc.type = 'triangle';
-            osc.frequency.value = hz;
+        // 音符押下ハンドラー（documentレベルでリリースを監視）
+        function handleNotePress(event, hz, noteId) {
+            event.preventDefault(); // タッチ時の合成マウスイベントを防止
 
-            const oscGain = audioCtx.createGain();
-            oscGain.gain.setValueAtTime(0, audioCtx.currentTime);
-            oscGain.gain.linearRampToValueAtTime(0.4, audioCtx.currentTime + 0.02);
+            // 前の音が残っている場合は停止
+            if (activeNoteHz !== null) {
+                releaseNoteSound();
+            }
 
-            osc.connect(oscGain);
-            oscGain.connect(synthGain);
-            osc.start();
+            activeNoteHz = hz;
+            activeNoteId = noteId;
 
-            activeOscillators[key] = { osc, oscGain };
-            isSynthPlaying = true;
-            currentSynthHz = hz;
+            // 音を開始
+            initEngine().then(() => {
+                // initEngine完了後にまだ同じ音符が押されているか確認
+                if (activeNoteHz !== hz || activeNoteId !== noteId) return;
 
-            // 視覚フィードバック
-            const hitEl = document.getElementById(noteId + '-hit');
-            const circleEl = document.getElementById(noteId);
-            if (hitEl) hitEl.classList.add('playing');
-            if (circleEl) circleEl.classList.add('playing');
+                const key = 'note_' + hz.toFixed(2);
+                if (activeOscillators[key]) return;
+
+                const osc = audioCtx.createOscillator();
+                osc.type = 'triangle';
+                osc.frequency.value = hz;
+
+                const oscGain = audioCtx.createGain();
+                oscGain.gain.setValueAtTime(0, audioCtx.currentTime);
+                oscGain.gain.linearRampToValueAtTime(0.4, audioCtx.currentTime + 0.02);
+
+                osc.connect(oscGain);
+                oscGain.connect(synthGain);
+                osc.start();
+
+                activeOscillators[key] = { osc, oscGain };
+                isSynthPlaying = true;
+                currentSynthHz = hz;
+
+                // 視覚フィードバック
+                const hitEl = document.getElementById(noteId + '-hit');
+                const circleEl = document.getElementById(noteId);
+                if (hitEl) hitEl.classList.add('playing');
+                if (circleEl) circleEl.classList.add('playing');
+            });
         }
 
-        // 履歴の音符用（押している間鳴る：再生停止）
-        function stopNoteSound(hz, noteId) {
+        // 音符リリース処理（どこで離しても音を止める）
+        function releaseNoteSound() {
+            if (activeNoteHz === null) return;
+
+            const hz = activeNoteHz;
+            const noteId = activeNoteId;
+            activeNoteHz = null;
+            activeNoteId = null;
+
             const key = 'note_' + hz.toFixed(2);
             if (!activeOscillators[key]) return;
 
@@ -658,6 +684,15 @@
             if (hitEl) hitEl.classList.remove('playing');
             if (circleEl) circleEl.classList.remove('playing');
         }
+
+        // documentレベルでリリースを監視（カーソル/指がどこにあっても音を止める）
+        document.addEventListener('mouseup', releaseNoteSound);
+        document.addEventListener('touchend', (e) => {
+            if (activeNoteHz !== null) {
+                e.preventDefault();
+                releaseNoteSound();
+            }
+        });
 
         // 鍵盤用（押しっぱなし対応：再生開始）
         async function startTone(midi) {
